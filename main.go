@@ -34,6 +34,8 @@ type searchQuery struct {
 func main() {
 	days := flag.Int("days", 7, "Amount of days the report should cover")
 	status := flag.String("status", "closed", "Amount of days the report should cover")
+	afterHours := flag.Bool("afterhours", false, "Separate metrics for after business hours")
+	location := flag.String("location", "UTC", "The location to check after hours")
 	flag.Parse()
 
 	fmt.Printf("Preparing opsgenie report for %d days...\n", *days)
@@ -48,7 +50,31 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	prepareReport(response.Alerts)
+	if *afterHours {
+		fmt.Println("Separating alerts for after business hours...")
+		timeLoc, err := time.LoadLocation(*location)
+		if err != nil {
+			panic(err)
+		}
+
+		businessHoursAlerts := make([]alertsv2.Alert, 0)
+		afterHoursAlerts := make([]alertsv2.Alert, 0)
+		for _, alert := range response.Alerts {
+			hour := alert.CreatedAt.In(timeLoc).Hour()
+			if hour >= 9 && hour < 18 {
+				businessHoursAlerts = append(businessHoursAlerts, alert)
+			} else {
+				afterHoursAlerts = append(afterHoursAlerts, alert)
+			}
+		}
+
+		fmt.Printf("\n## Business hour alerts (9 AM to 6 PM in %s)\n", *location)
+		prepareReport(businessHoursAlerts)
+		fmt.Printf("\n## After hour alerts (6 PM to 9 AM in %s)\n", *location)
+		prepareReport(afterHoursAlerts)
+	} else {
+		prepareReport(response.Alerts)
+	}
 
 }
 
