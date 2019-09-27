@@ -25,13 +25,26 @@ type responderAckTime struct {
 	count    int
 }
 
+type searchQuery struct {
+	startDate   time.Time
+	endDate     time.Time
+	alertStatus string
+}
+
 func main() {
 	days := flag.Int("days", 7, "Amount of days the report should cover")
+	status := flag.String("status", "closed", "Amount of days the report should cover")
 	flag.Parse()
 
 	fmt.Printf("Preparing opsgenie report for %d days...\n", *days)
 
-	response, err := getAlerts(time.Now().Add(time.Duration(*days*-24)*time.Hour), time.Now())
+	query := searchQuery{
+		time.Now().Add(time.Duration(*days*-24) * time.Hour),
+		time.Now(),
+		*status,
+	}
+
+	response, err := getAlerts(query)
 	if err != nil {
 		panic(err)
 	}
@@ -77,16 +90,19 @@ func prepareReport(alerts []alertsv2.Alert) {
 
 }
 
-func getAlerts(startDate time.Time, endDate time.Time) (*alertsv2.ListAlertResponse, error) {
+func getAlerts(query searchQuery) (*alertsv2.ListAlertResponse, error) {
 	cli := new(ogcli.OpsGenieClient)
 	apiKey := os.Getenv("GENIEKEY")
 	cli.SetAPIKey(apiKey)
 	cli.SetOpsGenieAPIUrl("https://api.eu.opsgenie.com")
 
 	req := alertsv2.ListAlertRequest{
-		Query: fmt.Sprintf("status:closed createdAt>%d createdAt<%d", epochMs(startDate), epochMs(endDate)),
+		Query: fmt.Sprintf("createdAt>%d createdAt<%d", epochMs(query.startDate), epochMs(query.endDate)),
 		Sort:  alertsv2.CreatedAt,
 		Order: alertsv2.Asc,
+	}
+	if query.alertStatus != "" && query.alertStatus != "all" {
+		req.Query = "status: " + query.alertStatus + " " + req.Query
 	}
 
 	alertCli, err := cli.AlertV2()
