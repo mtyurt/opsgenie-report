@@ -37,6 +37,7 @@ func main() {
 	status := flag.String("status", "all", "Status of alerts to cover")
 	afterHours := flag.Bool("afterhours", false, "Separate metrics for after business hours")
 	location := flag.String("location", "UTC", "The location to check after hours")
+	blame := flag.Bool("blame", false, "Show each responder's metrics as well")
 	flag.Parse()
 
 	query := searchQuery{
@@ -70,16 +71,16 @@ func main() {
 		}
 
 		fmt.Printf("\n## Business hour alerts (9 AM to 6 PM in %s)\n", *location)
-		prepareReport(businessHoursAlerts)
+		prepareReport(businessHoursAlerts, *blame)
 		fmt.Printf("\n## After hour alerts (6 PM to 9 AM in %s)\n", *location)
-		prepareReport(afterHoursAlerts)
+		prepareReport(afterHoursAlerts, *blame)
 	} else {
-		prepareReport(alerts)
+		prepareReport(alerts, *blame)
 	}
 
 }
 
-func prepareReport(alerts []alertsv2.Alert) {
+func prepareReport(alerts []alertsv2.Alert, blame bool) {
 	totalAck := 0
 	totalClose := 0
 	ackTimeByResponder := make(map[string]*responderAckTime)
@@ -88,15 +89,18 @@ func prepareReport(alerts []alertsv2.Alert) {
 		totalAck += int(alert.Report.AckTime)
 		totalClose += int(alert.Report.CloseTime)
 
-		acknowledger := strings.Split(alert.Report.AcknowledgedBy, "@")[0]
-		if acknowledger == "" {
-			continue
-		}
-		if responder, ok := ackTimeByResponder[acknowledger]; ok {
-			responder.count++
-			responder.totalAck += int(alert.Report.AckTime)
-		} else {
-			ackTimeByResponder[acknowledger] = &responderAckTime{int(alert.Report.AckTime), 1}
+		if blame {
+
+			acknowledger := strings.Split(alert.Report.AcknowledgedBy, "@")[0]
+			if acknowledger == "" {
+				continue
+			}
+			if responder, ok := ackTimeByResponder[acknowledger]; ok {
+				responder.count++
+				responder.totalAck += int(alert.Report.AckTime)
+			} else {
+				ackTimeByResponder[acknowledger] = &responderAckTime{int(alert.Report.AckTime), 1}
+			}
 		}
 	}
 
@@ -110,9 +114,11 @@ func prepareReport(alerts []alertsv2.Alert) {
 	fmt.Printf("MTTR for %d alerts:\n", len(alerts))
 	fmt.Println(humanReadable(totalClose / len(alerts)))
 
-	fmt.Println("\nMTTA per responder:")
-	for name, responder := range ackTimeByResponder {
-		fmt.Printf(" - %s: %s for %d alerts\n", name, humanReadable(responder.totalAck/responder.count), responder.count)
+	if blame {
+		fmt.Println("\nMTTA per responder:")
+		for name, responder := range ackTimeByResponder {
+			fmt.Printf(" - %s: %s for %d alerts\n", name, humanReadable(responder.totalAck/responder.count), responder.count)
+		}
 	}
 
 }
