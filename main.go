@@ -46,7 +46,9 @@ func main() {
 		*status,
 	}
 
-	response, err := getAlerts(query)
+	fmt.Printf("Preparing opsgenie report from %v to %v...\n", query.startDate.Format(time.UnixDate), query.endDate.Format(time.UnixDate))
+
+	alerts, err := getAlerts(query)
 	if err != nil {
 		panic(err)
 	}
@@ -59,7 +61,7 @@ func main() {
 
 		businessHoursAlerts := make([]alertsv2.Alert, 0)
 		afterHoursAlerts := make([]alertsv2.Alert, 0)
-		for _, alert := range response.Alerts {
+		for _, alert := range alerts {
 			hour := alert.CreatedAt.In(timeLoc).Hour()
 			if hour >= 9 && hour < 18 {
 				businessHoursAlerts = append(businessHoursAlerts, alert)
@@ -73,7 +75,7 @@ func main() {
 		fmt.Printf("\n## After hour alerts (6 PM to 9 AM in %s)\n", *location)
 		prepareReport(afterHoursAlerts)
 	} else {
-		prepareReport(response.Alerts)
+		prepareReport(alerts)
 	}
 
 }
@@ -116,24 +118,47 @@ func prepareReport(alerts []alertsv2.Alert) {
 
 }
 
-func getAlerts(query searchQuery) (*alertsv2.ListAlertResponse, error) {
+func getAlerts(query searchQuery) ([]alertsv2.Alert, error) {
 	cli := new(ogcli.OpsGenieClient)
 	apiKey := os.Getenv("GENIEKEY")
 	cli.SetAPIKey(apiKey)
 	cli.SetOpsGenieAPIUrl("https://api.eu.opsgenie.com")
 
-	req := alertsv2.ListAlertRequest{
-		Query: fmt.Sprintf("createdAt>%d createdAt<%d", epochMs(query.startDate), epochMs(query.endDate)),
-		Sort:  alertsv2.CreatedAt,
-		Order: alertsv2.Asc,
-	}
-	if query.alertStatus != "" && query.alertStatus != "all" {
-		req.Query = "status: " + query.alertStatus + " " + req.Query
-	}
-
 	alertCli, err := cli.AlertV2()
 	if err != nil {
 		return nil, fmt.Errorf("Creating alert cli failed: %w", err)
+	}
+
+	queryStr := fmt.Sprintf("createdAt>%d and createdAt<%d", epochMs(query.startDate), epochMs(query.endDate))
+	if query.alertStatus != "" && query.alertStatus != "all" {
+		queryStr = "status: " + query.alertStatus + " and " + queryStr
+	}
+	countResp, err := alertCli.Count(alertsv2.CountAlertRequest{Query: queryStr})
+	fmt.Printf("Total found alert count: %d\n", countResp.AlertCount.Count)
+	if err != nil {
+		return nil, fmt.Errorf("Fetching total count has failed %w", err)
+	}
+
+	fmt.Printf("Total count of found alerts: %d\n", countResp.AlertCount.Count)
+
+	alerts := make([]alertsv2.Alert, 0, countResp.AlertCount.Count)
+	for totalCount := 0; totalCount < countResp.AlertCount.Count; {
+		req := alertsv2.ListAlertRequest{
+			Query:  queryStr,
+			Sort:   alertsv2.CreatedAt,
+			Order:  alertsv2.Asc,
+			Offset: totalCount,
+			Limit:  100,
+		}
+		resp, err := alertCli.List(req)
+		if err != nil {
+			return nil, fmt.Errorf("Fetching alerts has failed for offset. %w", err)
+		}
+		alerts = append(alerts, resp.Alerts...)
+		totalCount += 100
+		if totalCount < countResp.AlertCount.Count {
+			time.Sleep(time.Second * 1)
+		}
 	}
 
 	return alertCli.List(req)
