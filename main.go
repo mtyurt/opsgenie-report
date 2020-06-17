@@ -32,17 +32,16 @@ type searchQuery struct {
 }
 
 func main() {
+	startFrom := flag.Int("startdays", 0, "Amount of days before today to start the report from")
 	days := flag.Int("days", 7, "Amount of days the report should cover")
-	status := flag.String("status", "closed", "Amount of days the report should cover")
+	status := flag.String("status", "all", "Status of alerts to cover")
 	afterHours := flag.Bool("afterhours", false, "Separate metrics for after business hours")
 	location := flag.String("location", "UTC", "The location to check after hours")
 	flag.Parse()
 
-	fmt.Printf("Preparing opsgenie report for %d days...\n", *days)
-
 	query := searchQuery{
-		time.Now().Add(time.Duration(*days*-24) * time.Hour),
-		time.Now(),
+		time.Now().Add(time.Duration((*days+*startFrom)*-24) * time.Hour),
+		time.Now().Add(time.Duration(*startFrom*-24) * time.Hour),
 		*status,
 	}
 
@@ -161,7 +160,7 @@ func getAlerts(query searchQuery) ([]alertsv2.Alert, error) {
 		}
 	}
 
-	return alertCli.List(req)
+	return alerts, nil
 }
 
 func epochMs(t time.Time) int64 {
